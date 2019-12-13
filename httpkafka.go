@@ -22,6 +22,7 @@ var logFormat = logging.MustStringFormatter(
 
 type Producer struct {
 	SyncProducer sarama.SyncProducer
+	AsyncProducer sarama.AsyncProducer
 	sync.WaitGroup
 }
 
