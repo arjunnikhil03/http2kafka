@@ -37,7 +37,7 @@ func NewConfigFromEnv() Config {
 	httpPort := flag.String("http-port", ":10025", "Http Port to upstream")
 	debug := flag.Bool("debug", false, "Debug HTTP2KAFKA")
 	flag.Parse()
-	hosts := []string{*kafkaHost}
+	hosts := strings.Split(*kafkaHost, ",")
 
 	return Config{hosts, *httpPort,*debug}
 }
@@ -160,7 +160,7 @@ func (s *Server) Handler(w http.ResponseWriter, r *http.Request){
         kafkatopic := strings.Replace(path, "/postdata/", "", -1)
         log.Debug("kafkaproducer:" + kafkatopic);
 
-	go s.Producer.ProduceMessageAsync(kafkatopic,sarama.StringEncoder(requestJSON))
+	s.Producer.ProduceMessageAsync(kafkatopic,sarama.StringEncoder(requestJSON))
 
 	//defer  s.Producer.AsyncProducer.Close() // // handle error yourself
 
