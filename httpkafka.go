@@ -7,10 +7,12 @@ import (
         "sync"
 	"strings"
 	"time"
+	"flag"
 
 	"github.com/Shopify/sarama"
         "github.com/stretchr/graceful"
 	"github.com/op/go-logging"
+	"github.com/pborman/uuid"
 )
 
 var log = logging.MustGetLogger("http2kafka.main")
@@ -24,17 +26,37 @@ type Producer struct {
    sync.WaitGroup
 }
 
-func main(){
+type Config struct {
+	KafkaHosts    []string
+	HttpPort  string
+	Debug  bool
+}
 
+func NewConfigFromEnv() Config {
+	kafkaHost := flag.String("kafka-host", "localhost", "Kafka broker to connect to")
+	httpPort := flag.String("http-port", ":10025", "Http Port to upstream")
+	debug := flag.Bool("debug", false, "Debug HTTP2KAFKA")
+	flag.Parse()
+	hosts := []string{*kafkaHost}
+
+	return Config{hosts, *httpPort,*debug}
+}
+
+func main(){ 
+   config := NewConfigFromEnv();
    logging.SetFormatter(logFormat)
-   logging.SetLevel(logging.ERROR, "http2kafka.main")
+   if(config.Debug){	
+       logging.SetLevel(logging.INFO, "http2kafka.main")
+   }else{
+	logging.SetLevel(logging.DEBUG, "http2kafka.main")
+   }
 
-   brokerList := []string{"10.130.18.33:9092"}
+   //brokerList := []string{"10.130.18.35:9092"}
 
-   log.Debug("Broker list: ",brokerList)
+   log.Info("Broker list: ",config.KafkaHosts)
 
    producer := Producer{
-      AsyncProducer: GetAsyncProducer(brokerList),
+      AsyncProducer: GetAsyncProducer(config.KafkaHosts),
    }
 
    producer.Add(1)
@@ -44,6 +66,7 @@ func main(){
                 TimeoutStatus:   500,
                 TimeoutResponse: "Request timed out.",
 		Producer: producer,
+		Port:config.HttpPort,
 	}
 
    server.Add(1)
@@ -63,9 +86,17 @@ func (p *Producer) ProduceMessageAsync(topic string, val sarama.Encoder){
 
 func GetAsyncProducer(brokerList []string) sarama.AsyncProducer {
    config := sarama.NewConfig()
+   config.ClientID = uuid.NewRandom().String()
+   
    config.Producer.RequiredAcks = sarama.WaitForLocal       // Only wait for the leader to ack
-   config.Producer.Compression = sarama.CompressionSnappy   // Compress messages
-   config.Producer.Flush.Frequency = 500 * time.Millisecond // Flush batches every 500ms
+   //config.Producer.Compression = sarama.CompressionSnappy   // Compress messages
+   config.Producer.Flush.Frequency = 1000 * time.Millisecond // Flush batches every 500ms
+   config.Producer.Flush.MaxMessages = 500000 // Flush batches every 500ms
+   config.Producer.Retry.Max = 3
+   config.Producer.Flush.Bytes = 350000
+   config.Producer.Retry.Backoff = 500 * time.Millisecond
+   config.Producer.Partitioner = sarama.NewHashPartitioner
+   
 
    client, err := sarama.NewClient(brokerList, config)
    if err != nil {
@@ -81,6 +112,8 @@ func GetAsyncProducer(brokerList []string) sarama.AsyncProducer {
                 log.Info("Kafka Producer created")
     }
 
+   //defer producer.AsyncClose()
+
    return producer
 }
 
@@ -89,6 +122,7 @@ type Server struct {
         TimeoutStatus   int
         TimeoutResponse string
         Producer        Producer
+	Port 		string
         sync.WaitGroup
 }
 
@@ -101,9 +135,9 @@ func (s *Server) Handler(w http.ResponseWriter, r *http.Request){
             log.Critical("REQUEST BODY ",err)
         }
 
-	for k, v := range r.Header {
+	/*for k, v := range r.Header {
      	   log.Debugf( "Header field %q, Value %q\n", k, v)
-    	}
+    	}*/
 	
 	//var m map[string]interface{}
 	m := make(map[string]interface{})
@@ -126,17 +160,17 @@ func (s *Server) Handler(w http.ResponseWriter, r *http.Request){
         kafkatopic := strings.Replace(path, "/postdata/", "", -1)
         log.Debug("kafkaproducer:" + kafkatopic);
 
-	s.Producer.ProduceMessageAsync(kafkatopic,sarama.StringEncoder(requestJSON))
+	go s.Producer.ProduceMessageAsync(kafkatopic,sarama.StringEncoder(requestJSON))
 
 	//defer  s.Producer.AsyncProducer.Close() // // handle error yourself
 
-        log.Debug("Request written in kafka")
-	//w.WriteHeader(200)
+        log.Info("Request written in kafka")
+	w.WriteHeader(200)
 }
 
 func (s *Server) Serve() {
         mux := http.NewServeMux()
         mux.HandleFunc("/", s.Handler)
-        graceful.Run(":10025", s.TimeoutTime, mux)
+        graceful.Run(s.Port, s.TimeoutTime, mux)
 	s.Done()
 }
