@@ -21,7 +21,7 @@ var logFormat = logging.MustStringFormatter(
 )
 
 type Producer struct {
-	AsyncProducer sarama.AsyncProducer
+	SyncProducer sarama.SyncProducer
 	sync.WaitGroup
 }
 
@@ -56,7 +56,7 @@ func main() {
 	log.Info("Broker list: ", config.KafkaHosts)
 
 	producer := Producer{
-		AsyncProducer: GetAsyncProducer(config.KafkaHosts),
+		SyncProducer: GetSyncProducer(config.KafkaHosts),
 	}
 
 	producer.Add(1)
